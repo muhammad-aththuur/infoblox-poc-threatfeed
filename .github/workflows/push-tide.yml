@@ -16,10 +16,17 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Push threat feed to Infoblox TIDE
+        env:
+          TIDE_API_KEY: ${{ secrets.INFOBLOX_TIDE_API_KEY }}
         run: |
+          echo "Submitting IOC to Infoblox TIDE..."
+
           curl --fail-with-body \
             --request POST \
             --url "https://csp.infoblox.com/tide/api/data/batches" \
-            --header "Authorization: Token ${{ secrets.INFOBLOX_TIDE_API_KEY }}" \
+            --header "Authorization: Token ${TIDE_API_KEY}" \
             --header "Content-Type: application/json" \
             --data-binary @threat-feed.json
+
+          echo ""
+          echo "Submission completed."
