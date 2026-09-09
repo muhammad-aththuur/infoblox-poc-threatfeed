@@ -1,0 +1,2 @@
+record_type,host,profile,detected,property
+host,test-poc-infoblox.example.com,POC_GITHUB,20260909T030000Z,Phishing_Phish
