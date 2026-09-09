@@ -1,0 +1,36 @@
+name: Push IOC to Infoblox Custom List
+
+on:
+  push:
+    paths:
+      - "custom-list.json"
+
+  workflow_dispatch:
+
+jobs:
+  push-custom-list:
+    runs-on: ubuntu-latest
+
+    env:
+      LIST_ID: "1077364"
+      LIST_NAME: "PTM_API"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Push IOC to Infoblox Custom List
+        env:
+          INFOBLOX_API_KEY: ${{ secrets.INFOBLOX_API_KEY }}
+        run: |
+          echo "Pushing IOC to Custom List ${LIST_NAME}..."
+
+          curl --fail-with-body \
+            --request POST \
+            --url "https://csp.infoblox.com/api/atcfw/v1/named_lists/${LIST_ID}/items" \
+            --header "Authorization: Token ${INFOBLOX_API_KEY}" \
+            --header "Content-Type: application/json" \
+            --data-binary @custom-list.json
+
+          echo ""
+          echo "Custom List update completed."
