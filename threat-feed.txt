@@ -1,2 +1,14 @@
-record_type,host,profile,detected,property
-host,www.example.com,PTM_Tide,20260909T030000Z,Phishing_Phish
+{
+  "feed": {
+    "profile": "PTM_Tide",
+    "record_type": "host",
+    "record": [
+      {
+        "host": "example.com",
+        "property": "Phishing_Phish",
+        "detected": "20260909T034500Z",
+        "duration": "1d"
+      }
+    ]
+  }
+}
