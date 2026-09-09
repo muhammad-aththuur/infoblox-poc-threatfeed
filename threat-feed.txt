@@ -1,2 +1,2 @@
 record_type,host,profile,detected,property
-host,test-poc-infoblox.example.com,PTM_Tide,20260909T030000Z,Phishing_Phish
+host,www.example.com,PTM_Tide,20260909T030000Z,Phishing_Phish
