@@ -1,0 +1,14 @@
+{
+  "feed": {
+    "profile": "PTM_Tide",
+    "record_type": "host",
+    "record": [
+      {
+        "host": "example.com",
+        "property": "Phishing_Phish",
+        "detected": "2026-09-09T03:30:00.000Z",
+        "duration": "1d"
+      }
+    ]
+  }
+}
