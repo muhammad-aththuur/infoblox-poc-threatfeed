@@ -1,0 +1,25 @@
+name: Push IOC to Infoblox TIDE
+
+on:
+  push:
+    paths:
+      - "threat-feed.json"
+
+  workflow_dispatch:
+
+jobs:
+  push-to-tide:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Push threat feed to Infoblox TIDE
+        run: |
+          curl --fail-with-body \
+            --request POST \
+            --url "https://csp.infoblox.com/tide/api/data/batches" \
+            --header "Authorization: Token ${{ secrets.INFOBLOX_TIDE_API_KEY }}" \
+            --header "Content-Type: application/json" \
+            --data-binary @threat-feed.json
