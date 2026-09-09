@@ -21,7 +21,7 @@ jobs:
 
       - name: Push IOC to Infoblox Custom List
         env:
-          INFOBLOX_API_KEY: ${{ secrets.INFOBLOX_API_KEY }}
+          INFOBLOX_API_KEY: ${{ secrets.INFOBLOX_TIDE_API_KEY }}
         run: |
           echo "Pushing IOC to Custom List ${LIST_NAME}..."
 
