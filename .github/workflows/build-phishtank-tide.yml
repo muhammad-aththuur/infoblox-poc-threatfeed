@@ -25,11 +25,14 @@ jobs:
           git checkout main
           git pull --rebase origin main
 
-      - name: Download and convert PhishTank feed
+            - name: Download and convert PhishTank feed
         run: |
           python3 - <<'PY'
+          import csv
+          import io
           import json
           import urllib.request
+          import urllib.error
           import ipaddress
           import re
 
@@ -38,24 +41,30 @@ jobs:
 
           PROFILE = "PTM_PHISHTANK"
           PROPERTY = "Phishing_Phish"
-
-          # TIDE recommends <= 50,000 records per submission.
           MAX_RECORDS = 50000
 
-          # Official PhishTank public JSON feed.
-          # URL constructed this way only for readability.
-          SOURCE_URL = (
-              "http://" +
-              "data.phishtank.com/data/online-valid.json"
-          )
+          SOURCES = [
+              (
+                  "https://data.phishtank.com/data/online-valid.csv",
+                  "csv"
+              ),
+              (
+                  "http://data.phishtank.com/data/online-valid.csv",
+                  "csv"
+              ),
+              (
+                  "https://data.phishtank.com/data/online-valid.json",
+                  "json"
+              ),
+              (
+                  "http://data.phishtank.com/data/online-valid.json",
+                  "json"
+              )
+          ]
 
           USER_AGENT = "phishtank/infoblox-poc-ptm"
 
           def tide_time(value):
-              """
-              Convert PhishTank ISO time into TIDE-supported format:
-              YYYYMMDDTHHMMSSZ
-              """
               if value:
                   try:
                       dt = datetime.fromisoformat(
@@ -74,51 +83,109 @@ jobs:
               ).strftime("%Y%m%dT%H%M%SZ")
 
 
-          print("Downloading PhishTank public feed...")
+          def download_feed():
+              last_error = None
 
-          request = urllib.request.Request(
-              SOURCE_URL,
-              headers={
-                  "User-Agent": USER_AGENT
-              }
-          )
+              for url, feed_type in SOURCES:
 
-          with urllib.request.urlopen(
-              request,
-              timeout=180
-          ) as response:
+                  print("")
+                  print(f"Trying: {url}")
 
-              data = json.load(response)
+                  try:
+                      req = urllib.request.Request(
+                          url,
+                          headers={
+                              "User-Agent": USER_AGENT,
+                              "Accept": "*/*"
+                          }
+                      )
 
+                      with urllib.request.urlopen(
+                          req,
+                          timeout=180
+                      ) as response:
 
-          if not isinstance(data, list):
+                          raw = response.read()
+
+                      print(
+                          f"SUCCESS: downloaded "
+                          f"{len(raw)} bytes"
+                      )
+
+                      return raw, feed_type, url
+
+                  except Exception as e:
+                      last_error = e
+                      print(
+                          f"FAILED: {type(e).__name__}: {e}"
+                      )
+
               raise RuntimeError(
-                  "Unexpected PhishTank JSON structure."
+                  f"All PhishTank sources failed. "
+                  f"Last error: {last_error}"
               )
 
 
+          raw, feed_type, source_used = download_feed()
+
+          print("")
+          print(f"Using source: {source_used}")
+          print(f"Feed type: {feed_type}")
+
+
+          if feed_type == "json":
+
+              data = json.loads(
+                  raw.decode(
+                      "utf-8",
+                      errors="replace"
+                  )
+              )
+
+              if not isinstance(data, list):
+                  raise RuntimeError(
+                      "Unexpected PhishTank JSON structure."
+                  )
+
+              items = data
+
+
+          else:
+
+              text = raw.decode(
+                  "utf-8-sig",
+                  errors="replace"
+              )
+
+              reader = csv.DictReader(
+                  io.StringIO(text)
+              )
+
+              items = list(reader)
+
+
           print(
-              f"Downloaded {len(data)} PhishTank records."
+              f"Parsed {len(items)} PhishTank records."
           )
 
 
-          # Dictionary digunakan agar hostname otomatis deduplicate.
           records_by_host = {}
 
 
-          for item in data:
+          for item in items:
 
-              # PhishTank public online-valid feed memang
-              # seharusnya hanya berisi verified + online.
-              # Tetap kita validasi lagi.
-              if str(
-                  item.get("verified", "")
-              ).lower() != "yes":
+              verified = str(
+                  item.get("verified", "yes")
+              ).lower()
+
+              online = str(
+                  item.get("online", "yes")
+              ).lower()
+
+              if verified != "yes":
                   continue
 
-              if str(
-                  item.get("online", "")
-              ).lower() != "yes":
+              if online != "yes":
                   continue
 
 
@@ -145,7 +212,6 @@ jobs:
                   continue
 
 
-              # Convert IDN hostname ke punycode jika diperlukan.
               try:
                   host = host.encode(
                       "idna"
@@ -154,13 +220,10 @@ jobs:
                   continue
 
 
-              # DNS hostname tidak boleh terlalu panjang.
               if len(host) > 253:
                   continue
 
 
-              # Untuk DNS feed kita hanya mau FQDN,
-              # bukan raw IP address.
               try:
                   ipaddress.ip_address(host)
                   continue
@@ -168,12 +231,10 @@ jobs:
                   pass
 
 
-              # Skip single-label hostname.
               if "." not in host:
                   continue
 
 
-              # Basic hostname validation.
               labels = host.split(".")
 
               invalid = any(
@@ -205,8 +266,6 @@ jobs:
               }
 
 
-              # Jika hostname yang sama ditemukan berkali-kali,
-              # simpan record terbaru saja.
               existing = records_by_host.get(host)
 
               if (
@@ -220,16 +279,20 @@ jobs:
               records_by_host.values()
           )
 
-
-          # Urutkan IOC paling baru terlebih dahulu.
           records.sort(
               key=lambda r: r["detected"],
               reverse=True
           )
 
-
-          # Batasi maksimal 50k sesuai rekomendasi TIDE.
           records = records[:MAX_RECORDS]
+
+
+          if not records:
+              raise RuntimeError(
+                  "PhishTank downloaded successfully, "
+                  "but zero valid DNS host indicators "
+                  "were generated."
+              )
 
 
           output = {
@@ -254,8 +317,6 @@ jobs:
               )
 
 
-          # Buat 20 sample hostname agar gampang
-          # menentukan domain untuk testing POC.
           sample_hosts = [
               record["host"]
               for record in records[:20]
@@ -272,6 +333,7 @@ jobs:
                   f.write(host + "\n")
 
 
+          print("")
           print(
               f"Generated {len(records)} unique "
               "TIDE host indicators."
