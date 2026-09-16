@@ -4,6 +4,11 @@
     "record_type": "host",
     "record": [
       {
+        "host": "pluscaducarpeliculas.com",
+        "property": "Phishing_Phish",
+        "detected": "20260916T045123Z"
+      },
+      {
         "host": "bdvcredienlinea-7--servcios.replit.app",
         "property": "Phishing_Phish",
         "detected": "20260916T032115Z"
