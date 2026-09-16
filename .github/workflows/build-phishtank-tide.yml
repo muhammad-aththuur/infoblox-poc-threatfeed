@@ -25,17 +25,16 @@ jobs:
           git checkout main
           git pull --rebase origin main
 
-            - name: Download and convert PhishTank feed
+      - name: Download and convert PhishTank feed
         run: |
           python3 - <<'PY'
           import csv
+          import gzip
           import io
-          import json
-          import urllib.request
-          import urllib.error
           import ipaddress
+          import json
           import re
-
+          import urllib.request
           from urllib.parse import urlsplit
           from datetime import datetime, timezone
 
@@ -43,38 +42,25 @@ jobs:
           PROPERTY = "Phishing_Phish"
           MAX_RECORDS = 50000
 
+          # Official PhishTank downloadable feeds.
           SOURCES = [
-              (
-                  "https://data.phishtank.com/data/online-valid.csv",
-                  "csv"
-              ),
-              (
-                  "http://data.phishtank.com/data/online-valid.csv",
-                  "csv"
-              ),
-              (
-                  "https://data.phishtank.com/data/online-valid.json",
-                  "json"
-              ),
-              (
-                  "http://data.phishtank.com/data/online-valid.json",
-                  "json"
-              )
+              ("http://data.phishtank.com/data/online-valid.csv", "csv", False),
+              ("http://data.phishtank.com/data/online-valid.csv.gz", "csv", True),
+              ("http://data.phishtank.com/data/online-valid.json", "json", False),
+              ("http://data.phishtank.com/data/online-valid.json.gz", "json", True),
           ]
 
-          USER_AGENT = "phishtank/infoblox-poc-ptm"
+          USER_AGENT = "phishtank/muhammad-aththuur-infoblox-poc"
 
           def tide_time(value):
               if value:
                   try:
                       dt = datetime.fromisoformat(
-                          value.replace("Z", "+00:00")
+                          str(value).replace("Z", "+00:00")
                       )
-
                       return dt.astimezone(
                           timezone.utc
                       ).strftime("%Y%m%dT%H%M%SZ")
-
                   except Exception:
                       pass
 
@@ -82,17 +68,15 @@ jobs:
                   timezone.utc
               ).strftime("%Y%m%dT%H%M%SZ")
 
-
           def download_feed():
               last_error = None
 
-              for url, feed_type in SOURCES:
-
+              for url, feed_type, compressed in SOURCES:
                   print("")
                   print(f"Trying: {url}")
 
                   try:
-                      req = urllib.request.Request(
+                      request = urllib.request.Request(
                           url,
                           headers={
                               "User-Agent": USER_AGENT,
@@ -101,30 +85,30 @@ jobs:
                       )
 
                       with urllib.request.urlopen(
-                          req,
+                          request,
                           timeout=180
                       ) as response:
-
                           raw = response.read()
 
+                      if compressed:
+                          raw = gzip.decompress(raw)
+
                       print(
-                          f"SUCCESS: downloaded "
-                          f"{len(raw)} bytes"
+                          f"SUCCESS: downloaded {len(raw)} bytes"
                       )
 
                       return raw, feed_type, url
 
-                  except Exception as e:
-                      last_error = e
+                  except Exception as exc:
+                      last_error = exc
                       print(
-                          f"FAILED: {type(e).__name__}: {e}"
+                          f"FAILED: {type(exc).__name__}: {exc}"
                       )
 
               raise RuntimeError(
-                  f"All PhishTank sources failed. "
+                  "All PhishTank download sources failed. "
                   f"Last error: {last_error}"
               )
-
 
           raw, feed_type, source_used = download_feed()
 
@@ -132,26 +116,20 @@ jobs:
           print(f"Using source: {source_used}")
           print(f"Feed type: {feed_type}")
 
-
           if feed_type == "json":
-
-              data = json.loads(
+              items = json.loads(
                   raw.decode(
                       "utf-8",
                       errors="replace"
                   )
               )
 
-              if not isinstance(data, list):
+              if not isinstance(items, list):
                   raise RuntimeError(
                       "Unexpected PhishTank JSON structure."
                   )
 
-              items = data
-
-
           else:
-
               text = raw.decode(
                   "utf-8-sig",
                   errors="replace"
@@ -163,24 +141,21 @@ jobs:
 
               items = list(reader)
 
-
           print(
               f"Parsed {len(items)} PhishTank records."
           )
 
-
           records_by_host = {}
-
 
           for item in items:
 
               verified = str(
-                  item.get("verified", "yes")
-              ).lower()
+                  item.get("verified", "")
+              ).strip().lower()
 
               online = str(
-                  item.get("online", "yes")
-              ).lower()
+                  item.get("online", "")
+              ).strip().lower()
 
               if verified != "yes":
                   continue
@@ -188,17 +163,15 @@ jobs:
               if online != "yes":
                   continue
 
-
-              url = str(
+              phishing_url = str(
                   item.get("url", "")
               ).strip()
 
-              if not url:
+              if not phishing_url:
                   continue
 
-
               try:
-                  parsed = urlsplit(url)
+                  parsed = urlsplit(phishing_url)
 
                   host = (
                       parsed.hostname or ""
@@ -207,11 +180,10 @@ jobs:
               except Exception:
                   continue
 
-
               if not host:
                   continue
 
-
+              # Convert IDN to punycode.
               try:
                   host = host.encode(
                       "idna"
@@ -219,52 +191,47 @@ jobs:
               except UnicodeError:
                   continue
 
-
               if len(host) > 253:
                   continue
 
-
+              # Skip raw IP indicators.
               try:
                   ipaddress.ip_address(host)
                   continue
               except ValueError:
                   pass
 
-
+              # DNS hostname must contain at least one dot.
               if "." not in host:
                   continue
-
 
               labels = host.split(".")
 
               invalid = any(
-                  len(label) > 63
+                  len(label) == 0
+                  or len(label) > 63
                   or not re.fullmatch(
                       r"[a-z0-9-]+",
                       label
                   )
                   or label.startswith("-")
                   or label.endswith("-")
-
                   for label in labels
               )
 
               if invalid:
                   continue
 
-
               detected = tide_time(
                   item.get("verification_time")
                   or item.get("submission_time")
               )
-
 
               record = {
                   "host": host,
                   "property": PROPERTY,
                   "detected": detected
               }
-
 
               existing = records_by_host.get(host)
 
@@ -274,26 +241,22 @@ jobs:
               ):
                   records_by_host[host] = record
 
-
           records = list(
               records_by_host.values()
           )
 
           records.sort(
-              key=lambda r: r["detected"],
+              key=lambda record: record["detected"],
               reverse=True
           )
 
           records = records[:MAX_RECORDS]
 
-
           if not records:
               raise RuntimeError(
-                  "PhishTank downloaded successfully, "
-                  "but zero valid DNS host indicators "
-                  "were generated."
+                  "PhishTank was downloaded, but zero "
+                  "valid hostname indicators were generated."
               )
-
 
           output = {
               "feed": {
@@ -303,35 +266,29 @@ jobs:
               }
           }
 
-
           with open(
               "phishtank-tide.json",
               "w",
               encoding="utf-8"
-          ) as f:
-
+          ) as file:
               json.dump(
                   output,
-                  f,
+                  file,
                   indent=2
               )
-
 
           sample_hosts = [
               record["host"]
               for record in records[:20]
           ]
 
-
           with open(
               "phishtank-sample-hosts.txt",
               "w",
               encoding="utf-8"
-          ) as f:
-
+          ) as file:
               for host in sample_hosts:
-                  f.write(host + "\n")
-
+                  file.write(host + "\n")
 
           print("")
           print(
@@ -357,7 +314,8 @@ jobs:
 
           if git diff --cached --quiet; then
             echo "No feed changes."
-          else
-            git commit -m "Update PhishTank TIDE feed"
-            git push origin HEAD:main
+            exit 0
           fi
+
+          git commit -m "Update PhishTank TIDE feed"
+          git push origin HEAD:main
