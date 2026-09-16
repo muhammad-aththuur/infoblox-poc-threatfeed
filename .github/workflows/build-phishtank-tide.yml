@@ -35,6 +35,7 @@ jobs:
           import json
           import re
           import urllib.request
+
           from urllib.parse import urlsplit
           from datetime import datetime, timezone
 
@@ -42,12 +43,27 @@ jobs:
           PROPERTY = "Phishing_Phish"
           MAX_RECORDS = 50000
 
-          # Official PhishTank downloadable feeds.
           SOURCES = [
-              ("http://data.phishtank.com/data/online-valid.csv", "csv", False),
-              ("http://data.phishtank.com/data/online-valid.csv.gz", "csv", True),
-              ("http://data.phishtank.com/data/online-valid.json", "json", False),
-              ("http://data.phishtank.com/data/online-valid.json.gz", "json", True),
+              (
+                  "http://data.phishtank.com/data/online-valid.csv",
+                  "csv",
+                  False
+              ),
+              (
+                  "http://data.phishtank.com/data/online-valid.csv.gz",
+                  "csv",
+                  True
+              ),
+              (
+                  "http://data.phishtank.com/data/online-valid.json",
+                  "json",
+                  False
+              ),
+              (
+                  "http://data.phishtank.com/data/online-valid.json.gz",
+                  "json",
+                  True
+              )
           ]
 
           USER_AGENT = "phishtank/muhammad-aththuur-infoblox-poc"
@@ -58,9 +74,11 @@ jobs:
                       dt = datetime.fromisoformat(
                           str(value).replace("Z", "+00:00")
                       )
+
                       return dt.astimezone(
                           timezone.utc
                       ).strftime("%Y%m%dT%H%M%SZ")
+
                   except Exception:
                       pass
 
@@ -68,10 +86,12 @@ jobs:
                   timezone.utc
               ).strftime("%Y%m%dT%H%M%SZ")
 
+
           def download_feed():
               last_error = None
 
               for url, feed_type, compressed in SOURCES:
+
                   print("")
                   print(f"Trying: {url}")
 
@@ -88,6 +108,7 @@ jobs:
                           request,
                           timeout=180
                       ) as response:
+
                           raw = response.read()
 
                       if compressed:
@@ -100,9 +121,12 @@ jobs:
                       return raw, feed_type, url
 
                   except Exception as exc:
+
                       last_error = exc
+
                       print(
-                          f"FAILED: {type(exc).__name__}: {exc}"
+                          f"FAILED: "
+                          f"{type(exc).__name__}: {exc}"
                       )
 
               raise RuntimeError(
@@ -110,13 +134,16 @@ jobs:
                   f"Last error: {last_error}"
               )
 
+
           raw, feed_type, source_used = download_feed()
 
           print("")
           print(f"Using source: {source_used}")
           print(f"Feed type: {feed_type}")
 
+
           if feed_type == "json":
+
               items = json.loads(
                   raw.decode(
                       "utf-8",
@@ -125,11 +152,13 @@ jobs:
               )
 
               if not isinstance(items, list):
+
                   raise RuntimeError(
                       "Unexpected PhishTank JSON structure."
                   )
 
           else:
+
               text = raw.decode(
                   "utf-8-sig",
                   errors="replace"
@@ -141,11 +170,14 @@ jobs:
 
               items = list(reader)
 
+
           print(
               f"Parsed {len(items)} PhishTank records."
           )
 
+
           records_by_host = {}
+
 
           for item in items:
 
@@ -157,11 +189,13 @@ jobs:
                   item.get("online", "")
               ).strip().lower()
 
+
               if verified != "yes":
                   continue
 
               if online != "yes":
                   continue
+
 
               phishing_url = str(
                   item.get("url", "")
@@ -170,7 +204,9 @@ jobs:
               if not phishing_url:
                   continue
 
+
               try:
+
                   parsed = urlsplit(phishing_url)
 
                   host = (
@@ -178,54 +214,78 @@ jobs:
                   ).lower().rstrip(".")
 
               except Exception:
+
                   continue
+
 
               if not host:
                   continue
 
-              # Convert IDN to punycode.
+
+              # Convert IDN hostname ke punycode.
               try:
+
                   host = host.encode(
                       "idna"
                   ).decode("ascii")
+
               except UnicodeError:
+
                   continue
 
+
+              # Maksimum panjang DNS hostname.
               if len(host) > 253:
                   continue
 
-              # Skip raw IP indicators.
+
+              # Skip IOC berupa IP address.
               try:
+
                   ipaddress.ip_address(host)
                   continue
+
               except ValueError:
+
                   pass
 
-              # DNS hostname must contain at least one dot.
+
+              # Harus hostname/FQDN.
               if "." not in host:
                   continue
 
+
               labels = host.split(".")
 
+
               invalid = any(
+
                   len(label) == 0
+
                   or len(label) > 63
+
                   or not re.fullmatch(
                       r"[a-z0-9-]+",
                       label
                   )
+
                   or label.startswith("-")
+
                   or label.endswith("-")
+
                   for label in labels
               )
 
+
               if invalid:
                   continue
+
 
               detected = tide_time(
                   item.get("verification_time")
                   or item.get("submission_time")
               )
+
 
               record = {
                   "host": host,
@@ -233,30 +293,51 @@ jobs:
                   "detected": detected
               }
 
+
               existing = records_by_host.get(host)
+
 
               if (
                   existing is None
                   or detected > existing["detected"]
               ):
+
                   records_by_host[host] = record
+
 
           records = list(
               records_by_host.values()
           )
+
 
           records.sort(
               key=lambda record: record["detected"],
               reverse=True
           )
 
+
           records = records[:MAX_RECORDS]
 
+
           if not records:
+
               raise RuntimeError(
                   "PhishTank was downloaded, but zero "
                   "valid hostname indicators were generated."
               )
+
+
+          print("")
+          print(
+              f"Generated {len(records)} unique "
+              "hostname indicators."
+          )
+
+
+          # ==================================================
+          # GENERATE JSON
+          # Untuk TIDE API / File Upload
+          # ==================================================
 
           output = {
               "feed": {
@@ -266,43 +347,112 @@ jobs:
               }
           }
 
+
           with open(
               "phishtank-tide.json",
               "w",
               encoding="utf-8"
           ) as file:
+
               json.dump(
                   output,
                   file,
                   indent=2
               )
 
+
+          print(
+              "Generated: phishtank-tide.json"
+          )
+
+
+          # ==================================================
+          # GENERATE CSV
+          # Untuk TIDE URL Upload
+          # ==================================================
+
+          csv_fields = [
+              "record_type",
+              "host",
+              "profile",
+              "detected",
+              "property"
+          ]
+
+
+          with open(
+              "phishtank-tide.csv",
+              "w",
+              newline="",
+              encoding="utf-8"
+          ) as file:
+
+              writer = csv.DictWriter(
+                  file,
+                  fieldnames=csv_fields
+              )
+
+              writer.writeheader()
+
+
+              for record in records:
+
+                  writer.writerow({
+                      "record_type": "host",
+                      "host": record["host"],
+                      "profile": PROFILE,
+                      "detected": record["detected"],
+                      "property": record["property"]
+                  })
+
+
+          print(
+              "Generated: phishtank-tide.csv"
+          )
+
+
+          # ==================================================
+          # GENERATE SAMPLE DOMAIN
+          # Untuk mempermudah testing POC
+          # ==================================================
+
           sample_hosts = [
               record["host"]
               for record in records[:20]
           ]
+
 
           with open(
               "phishtank-sample-hosts.txt",
               "w",
               encoding="utf-8"
           ) as file:
-              for host in sample_hosts:
-                  file.write(host + "\n")
 
-          print("")
+              for host in sample_hosts:
+
+                  file.write(
+                      host + "\n"
+                  )
+
+
           print(
-              f"Generated {len(records)} unique "
-              "TIDE host indicators."
+              "Generated: phishtank-sample-hosts.txt"
           )
+
 
           print("")
           print("Sample hosts:")
 
+
           for host in sample_hosts:
-              print(f"  {host}")
+
+              print(
+                  f"  {host}"
+              )
+
 
           PY
+
 
       - name: Commit generated TIDE feed
         run: |
@@ -310,6 +460,7 @@ jobs:
           git config user.email "github-actions@github.com"
 
           git add phishtank-tide.json
+          git add phishtank-tide.csv
           git add phishtank-sample-hosts.txt
 
           if git diff --cached --quiet; then
@@ -318,4 +469,5 @@ jobs:
           fi
 
           git commit -m "Update PhishTank TIDE feed"
+
           git push origin HEAD:main
